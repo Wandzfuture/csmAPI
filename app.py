@@ -7,13 +7,16 @@ import jwt
 import datetime as dt
 from functools import wraps
 
+
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///snippets.db'
-app.config['SECRET_KEY'] = 'your-secret-key'  # Change this to a secure secret key
+app.config['SECRET_KEY'] = 'your-secret-key'
 db = SQLAlchemy(app)
+
 
 class ValidationError(Exception):
     pass
+
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -22,11 +25,13 @@ class User(db.Model):
     password = db.Column(db.String(120), nullable=False)
     snippets = db.relationship('Snippet', backref='author', lazy=True)
 
+
 class Category(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False)
     description = db.Column(db.String(200))
     snippets = db.relationship('Snippet', backref='category', lazy=True)
+
 
 class Snippet(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -35,7 +40,11 @@ class Snippet(db.Model):
     language = db.Column(db.String(50))
     tags = db.Column(db.String(200))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    last_updated = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_updated = db.Column(
+        db.DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow
+    )
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     category_id = db.Column(db.Integer, db.ForeignKey('category.id'))
 
@@ -49,71 +58,77 @@ class Snippet(db.Model):
         if self.language and len(self.language) > 50:
             raise ValidationError("Language must be less than 50 characters")
 
+
 # Create tables
 with app.app_context():
     db.create_all()
 
-# Token decorator
+
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization')
-        
+
         if not token:
             return jsonify({'error': 'Token is missing'}), 401
-        
+
         try:
             token = token.split(' ')[1]  # Remove 'Bearer ' prefix
-            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+            data = jwt.decode(
+                token,
+                app.config['SECRET_KEY'],
+                algorithms=["HS256"]
+            )
             current_user = User.query.get(data['user_id'])
-        except:
+        except jwt.InvalidTokenError:
             return jsonify({'error': 'Token is invalid'}), 401
 
         return f(current_user, *args, **kwargs)
-    
+
     return decorated
 
-# Auth routes
+
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.get_json()
-    
+
     if User.query.filter_by(username=data['username']).first():
         return jsonify({'error': 'Username already exists'}), 400
-    
+
     if User.query.filter_by(email=data['email']).first():
         return jsonify({'error': 'Email already exists'}), 400
-    
+
     hashed_password = generate_password_hash(data['password'])
-    
+
     new_user = User(
         username=data['username'],
         email=data['email'],
         password=hashed_password
     )
-    
+
     db.session.add(new_user)
     db.session.commit()
-    
+
     return jsonify({'message': 'User created successfully'}), 201
+
 
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
-    
+
     user = User.query.filter_by(username=data['username']).first()
-    
+
     if not user or not check_password_hash(user.password, data['password']):
         return jsonify({'error': 'Invalid credentials'}), 401
-    
+
     token = jwt.encode({
         'user_id': user.id,
         'exp': datetime.utcnow() + dt.timedelta(hours=24)
     }, app.config['SECRET_KEY'])
-    
+
     return jsonify({'token': token})
 
-# Category routes
+
 @app.route('/api/categories', methods=['GET'])
 @token_required
 def get_categories(current_user):
@@ -124,22 +139,23 @@ def get_categories(current_user):
         'description': c.description
     } for c in categories])
 
+
 @app.route('/api/categories', methods=['POST'])
 @token_required
 def create_category(current_user):
     data = request.get_json()
-    
+
     new_category = Category(
         name=data['name'],
         description=data.get('description', '')
     )
-    
+
     db.session.add(new_category)
     db.session.commit()
-    
+
     return jsonify({'message': 'Category created successfully'}), 201
 
-# Updated snippet routes with authentication
+
 @app.route('/api/snippets', methods=['POST'])
 @token_required
 def create_snippet(current_user):
@@ -149,7 +165,7 @@ def create_snippet(current_user):
             raise ValidationError("No data provided")
 
         tags = ','.join(data.get('tags', []))
-        
+
         new_snippet = Snippet(
             title=data.get('title', '').strip(),
             code=data.get('code', '').strip(),
@@ -158,12 +174,12 @@ def create_snippet(current_user):
             user_id=current_user.id,
             category_id=data.get('category_id')
         )
-        
+
         new_snippet.validate()
-        
+
         db.session.add(new_snippet)
         db.session.commit()
-        
+
         return jsonify({
             'id': new_snippet.id,
             'title': new_snippet.title,
@@ -173,7 +189,11 @@ def create_snippet(current_user):
     except ValidationError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
-        return jsonify({'error': 'Failed to create snippet', 'details': str(e)}), 500
+        return jsonify({
+            'error': 'Failed to create snippet',
+            'details': str(e)
+        }), 500
+
 
 @app.route('/api/snippets', methods=['GET'])
 @token_required
@@ -183,9 +203,9 @@ def get_snippets(current_user):
         tag = request.args.get('tag')
         search = request.args.get('search')
         category_id = request.args.get('category_id')
-        
+
         query = Snippet.query.filter_by(user_id=current_user.id)
-        
+
         if language:
             query = query.filter_by(language=language)
         if tag:
@@ -198,9 +218,9 @@ def get_snippets(current_user):
             ))
         if category_id:
             query = query.filter_by(category_id=category_id)
-        
+
         snippets = query.all()
-        
+
         return jsonify([{
             'id': s.id,
             'title': s.title,
@@ -213,7 +233,11 @@ def get_snippets(current_user):
         } for s in snippets])
 
     except Exception as e:
-        return jsonify({'error': 'Failed to retrieve snippets', 'details': str(e)}), 500
+        return jsonify({
+            'error': 'Failed to retrieve snippets',
+            'details': str(e)
+        }), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True)
